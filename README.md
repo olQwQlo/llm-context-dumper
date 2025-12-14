@@ -1,2 +1,55 @@
-# llm-context-dumper
-A high-performance PowerShell script to dump your project files into a single Markdown file. Optimized for LLM context (ChatGPT/Claude) with smart filtering (.gitignore, secrets redaction) and parallel processing.
+# repo-to-markdown-ps 📄➡️📦
+
+A high-performance PowerShell script that converts an entire project directory into a single Markdown file.
+Designed to create **context for LLMs** (ChatGPT, Claude, Gemini, etc.).
+
+## ✨ Features
+
+- **🌲 Visual File Tree**: Generates a clear directory structure at the top.
+- **🚫 Smart Filtering**:
+  - Respects `.gitignore` (optional).
+  - Automatically hides node_modules, .git, binaries, and build artifacts.
+  - **Security Redaction**: Hides contents of secrets (`.env`, private keys) while keeping the file structure.
+- **🚀 High Performance**: Supports parallel reading (`-ParallelRead`) for large repositories using PowerShell 7+.
+- **📝 Markdown Output**: Code blocks are properly formatted with language extensions for syntax highlighting.
+
+## 🚀 Usage
+
+Download `Dump-Repo.ps1` and run it in your terminal.
+
+### Basic Usage
+
+```powershell
+./Dump-Repo.ps1 -RootPath "C:\Projects\MyApp"
+```
+This generates `dump.md` in the current directory.
+
+### Advanced Usage
+
+```powershell
+./Dump-Repo.ps1 `
+  -RootPath "C:\Projects\MyApp" `
+  -OutPath "./context.md" `
+  -UseGitignore `
+  -ParallelRead `
+  -ShowProgress
+```
+
+## ⚙️ Parameters
+
+| Parameter | Description | Default |
+| :--- | :--- | :--- |
+| `-RootPath` | Target directory path (Required). | - |
+| `-OutPath` | Output file path. | `./dump.md` |
+| `-UseGitignore` | Use `.gitignore` to exclude files. | `false` |
+| `-ParallelRead` | Enable parallel processing (Requires PS 7+). | `false` |
+| `-ShowProgress` | Show progress bar during processing. | `false` |
+| `-MaxFileSizeMB` | Skip files larger than this size. | `5` (MB) |
+
+## 🛡️ Security Note
+
+This script attempts to redact sensitive files (like `.env`, `id_rsa`, `*.pem`) by default. However, **always review the output file** before uploading it to any third-party AI service to ensure no secrets are leaked.
+
+## 📄 License
+
+MIT License
