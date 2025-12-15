@@ -98,6 +98,38 @@ function Test-PathMatchesPattern(
   return $false
 }
 
+function Get-HiddenAncestorRel([string]$relPath, [string[]]$hideDirNames, [bool]$isDirectory=$false) {
+  $parts = $relPath -split "[\\/]" -ne ""
+  if (-not $parts) { return $null }
+
+  $limit = if ($isDirectory) { $parts.Count } elseif ($parts.Count -gt 1) { $parts.Count - 1 } else { 0 }
+  if ($limit -le 0) { return $null }
+
+  $accum = New-Object System.Collections.Generic.List[string]
+  for ($i=0; $i -lt $limit; $i++) {
+    $name = $parts[$i]
+    if (Is-NameIn $name $hideDirNames) {
+      $accum.Add($name) | Out-Null
+      return ($accum -join "/")
+    }
+    $accum.Add($name) | Out-Null
+  }
+
+  return $null
+}
+
+function Detect-SensitiveContent([string]$text) {
+  $hits = New-Object System.Collections.Generic.List[string]
+
+  if ($text -match "ghp_[A-Za-z0-9]{24,}") { $hits.Add("GitHub token") | Out-Null }
+  if ($text -match "github_pat_[A-Za-z0-9_]{20,}") { $hits.Add("GitHub PAT") | Out-Null }
+  if ($text -match "AKIA[0-9A-Z]{16}") { $hits.Add("AWS Access Key") | Out-Null }
+  if ($text -match "-----BEGIN (?:RSA|OPENSSH|EC) PRIVATE KEY-----") { $hits.Add("Private key block") | Out-Null }
+  if ($text -match "\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b") { $hits.Add("JWT-like token") | Out-Null }
+
+  return $hits.ToArray()
+}
+
 function Get-LangFromExtension([string]$ext) {
   switch ($ext.ToLowerInvariant()) {
     ".ps1" { "powershell" } ".psm1" { "powershell" } ".psd1" { "powershell" }
@@ -156,10 +188,13 @@ function Convert-GitignoreToLikePatterns([string]$rootFull) {
       continue
     }
 
-    # それ以外は “-like でそれっぽく” 使う（完全互換ではない）
-    $pat = $line.Replace("/", "*").Replace("\", "*")
-    if ($pat -notlike "*`**") { } # 何もしない（見た目の保険）
-    if ($pat -notlike "*") { $pat = "*$pat*" }
+    # それ以外は “拡張子系だけ拾う” に割り切る（過剰除外を避ける）
+    if ($line -like "*/?*") { continue } # 階層指定は捨てる
+
+    if ($line -notmatch "\.") { continue } # 拡張子を含まないものはスキップ
+
+    $pat = $line
+    if (-not $pat.StartsWith("*")) { $pat = "*$pat" }
     $filePats.Add($pat) | Out-Null
   }
 
@@ -183,9 +218,7 @@ if ($UseGitignore) {
 }
 
 # “伏せたディレクトリ” を Files セクションで 1回だけ説明するための集合
-$HiddenDirRelSet = New-Object "System.Collections.Generic.HashSet[string]" ([StringComparer]::OrdinalIgnoreCase)
-
-function Get-TreeLines([string]$rootFull) {
+function Get-TreeLines([string]$rootFull, [hashtable]$DetectedSecrets) {
   $lines = New-Object System.Collections.Generic.List[string]
   $lines.Add("# Dump")
   $lines.Add("")
@@ -208,7 +241,6 @@ function Get-TreeLines([string]$rootFull) {
 
         if (Is-NameIn $item.Name $HideDirNames) {
           $lines.Add("$prefix$branch$($item.Name)/ [DIR:本文非表示]")
-          [void]$HiddenDirRelSet.Add($childRel)
           continue
         }
 
@@ -221,6 +253,9 @@ function Get-TreeLines([string]$rootFull) {
 
         if (Is-MatchAnyPattern $item.Name $HideFilePatterns) { $tag = " [FILE:本文非表示]" }
         elseif (Test-PathMatchesPattern $leafRel $RedactDirNames $RedactFilePatterns -and -not (Is-NameIn $item.Name $AllowEnvNames)) { $tag = " [機微:本文非表示]" }
+        elseif ($DetectedSecrets.ContainsKey($leafRel)) {
+          $tag = " [機微:本文非表示:検出項目 " + ($DetectedSecrets[$leafRel] -join ", ") + "]"
+        }
 
         $lines.Add("$prefix$branch$($item.Name)$tag")
       }
@@ -233,19 +268,13 @@ function Get-TreeLines([string]$rootFull) {
   return $lines
 }
 
-$tree = Get-TreeLines $rootFull
-
 # 早期フィルタ：-File を使ってまず “ファイルだけ” 列挙（大規模で効く）
 $allFiles =
   Get-ChildItem -LiteralPath $rootFull -Recurse -Force -File |
   Sort-Object @{Expression={ $_.DirectoryName };Ascending=$true}, @{Expression={ $_.Name };Ascending=$true}
 
-$sb = New-Object System.Text.StringBuilder
-foreach ($l in $tree) { [void]$sb.AppendLine($l) }
-[void]$sb.AppendLine("## Files")
-[void]$sb.AppendLine("")
-
 $writtenHiddenDir = New-Object "System.Collections.Generic.HashSet[string]" ([StringComparer]::OrdinalIgnoreCase)
+$DetectedSecretMap = @{}
 
 # 並列読み込みを使う場合も順序は維持したいので、結果は一旦貯める
 $results = New-Object System.Collections.Generic.List[psobject]
@@ -253,11 +282,7 @@ $results = New-Object System.Collections.Generic.List[psobject]
 function Classify-File([System.IO.FileInfo]$fileInfo) {
   $rel = Normalize-Rel ([System.IO.Path]::GetRelativePath($rootFull, $fileInfo.FullName))
 
-  # どの HideDir に属するか（属すなら dirRel を返す）
-  $hiddenDirRel = $null
-  foreach ($d in $HiddenDirRelSet) {
-    if ($rel -like "$d/*") { $hiddenDirRel = $d; break }
-  }
+  $hiddenDirRel = Get-HiddenAncestorRel $rel $HideDirNames
 
   $isHiddenFile = Is-MatchAnyPattern $fileInfo.Name $HideFilePatterns
   $isRedact = (Test-PathMatchesPattern $rel $RedactDirNames $RedactFilePatterns) -and -not (Is-NameIn $fileInfo.Name $AllowEnvNames)
@@ -278,7 +303,6 @@ if ($ParallelRead -and $PSVersionTable.PSVersion.Major -ge 7) {
   $classified = foreach ($f in $allFiles) { Classify-File $f }
 
   $total = $classified.Count
-  $idx = 0
 
   $readables = $classified | Where-Object {
     -not $_.HiddenDirRel -and -not $_.IsHiddenFile -and -not $_.IsRedacted -and $_.SizeBytes -le $maxBytes
@@ -307,6 +331,10 @@ if ($ParallelRead -and $PSVersionTable.PSVersion.Major -ge 7) {
       $reader = New-Object System.IO.StreamReader($fs2, [System.Text.Encoding]::UTF8, $true, 4096, $true)
       $text = $reader.ReadToEnd()
       $reader.Dispose()
+      $det = Detect-SensitiveContent $text
+      if ($det.Count -gt 0) {
+        return [pscustomobject]@{ Rel=$rel; Kind="Sensitive"; Detections=$det }
+      }
       return [pscustomobject]@{ Rel=$rel; Kind="Text"; Content=$text }
     } finally { $fs2.Dispose() }
   } -ThrottleLimit $ThrottleLimit
@@ -348,6 +376,12 @@ if ($ParallelRead -and $PSVersionTable.PSVersion.Major -ge 7) {
       continue
     }
 
+    if ($rr.Kind -eq "Sensitive") {
+      $DetectedSecretMap[$c.Rel] = $rr.Detections
+      $results.Add([pscustomobject]@{ Order=$i; Type="Sensitive"; Rel=$c.Rel; Detections=$rr.Detections }) | Out-Null
+      continue
+    }
+
     $results.Add([pscustomobject]@{
       Order=$i; Type="Text"; Rel=$c.Rel; FullName=$c.FullName; Name=$c.Name; Content=$rr.Content
     }) | Out-Null
@@ -383,6 +417,12 @@ else {
     if (Test-IsProbablyBinary $c.FullName) { $results.Add([pscustomobject]@{ Order=$i; Type="Binary"; Rel=$c.Rel }) | Out-Null; continue }
 
     $text = Read-TextFileAutoEncoding $c.FullName
+    $detected = Detect-SensitiveContent $text
+    if ($detected.Count -gt 0) {
+      $DetectedSecretMap[$c.Rel] = $detected
+      $results.Add([pscustomobject]@{ Order=$i; Type="Sensitive"; Rel=$c.Rel; Detections=$detected }) | Out-Null
+      continue
+    }
     $results.Add([pscustomobject]@{
       Order=$i; Type="Text"; Rel=$c.Rel; FullName=$c.FullName; Name=$c.Name; Content=$text
     }) | Out-Null
@@ -395,6 +435,12 @@ else {
 # Markdown 出力組み立て（順序維持）
 # ---------------------------
 $results = $results | Sort-Object Order
+$tree = Get-TreeLines $rootFull $DetectedSecretMap
+
+$sb = New-Object System.Text.StringBuilder
+foreach ($l in $tree) { [void]$sb.AppendLine($l) }
+[void]$sb.AppendLine("## Files")
+[void]$sb.AppendLine("")
 
 foreach ($r in $results) {
   switch ($r.Type) {
@@ -414,6 +460,13 @@ foreach ($r in $results) {
       [void]$sb.AppendLine("### $($r.Rel)")
       [void]$sb.AppendLine("")
       [void]$sb.AppendLine("> 機微情報につき非表示（存在のみ記録）")
+      [void]$sb.AppendLine("")
+    }
+    "Sensitive" {
+      $det = if ($r.Detections) { ($r.Detections -join ", ") } else { "検出" }
+      [void]$sb.AppendLine("### $($r.Rel)")
+      [void]$sb.AppendLine("")
+      [void]$sb.AppendLine("> 機微情報を検出したため本文非表示（検出項目: $det）")
       [void]$sb.AppendLine("")
     }
     "TooLarge" {
@@ -456,4 +509,13 @@ if ($dirOut -and -not (Test-Path -LiteralPath $dirOut)) {
   New-Item -ItemType Directory -Path $dirOut | Out-Null
 }
 [System.IO.File]::WriteAllText($OutPath, $sb.ToString(), [System.Text.Encoding]::UTF8)
+
+if ($DetectedSecretMap.Count -gt 0) {
+  Write-Host "Sensitive content detected in:"
+  foreach ($path in ($DetectedSecretMap.Keys | Sort-Object)) {
+    $label = ($DetectedSecretMap[$path] -join ", ")
+    Write-Host " - $path ($label)"
+  }
+}
+
 Write-Host "Wrote: $OutPath"
