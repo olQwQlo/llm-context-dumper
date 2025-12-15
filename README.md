@@ -21,3 +21,36 @@ Download `RepoDump.ps1` and run it in your terminal.
 
 ```powershell
 ./RepoDump.ps1 -RootPath "C:\Projects\MyApp"
+```
+
+This generates `dump.md` in the current directory.
+
+### Advanced Usage
+
+```powershell
+./RepoDump.ps1 `
+  -RootPath "C:\Projects\MyApp" `
+  -OutPath "./context.md" `
+  -UseGitignore `
+  -ParallelRead `
+  -ShowProgress
+```
+
+## ⚙️ Parameters
+
+| Parameter | Description | Default |
+| :--- | :--- | :--- |
+| `-RootPath` | Target directory path (Required). | - |
+| `-OutPath` | Output file path. | `./dump.md` |
+| `-UseGitignore` | Use `.gitignore` to exclude files. | `false` |
+| `-ParallelRead` | Enable parallel processing (Requires PS 7+). | `false` |
+| `-ShowProgress` | Show progress bar during processing. | `false` |
+| `-MaxFileSizeMB` | Skip files larger than this size. | `5` (MB) |
+
+## 🛡️ Security Note
+
+This script attempts to redact sensitive files (like `.env`, `id_rsa`, `*.pem`) by default. However, **always review the output file** before uploading it to any third-party AI service to ensure no secrets are leaked.
+
+## 📄 License
+
+MIT License
