@@ -1,6 +1,6 @@
 # repo-to-markdown-ps 📄➡️📦
 
-A high-performance PowerShell script that converts an entire project directory into a single Markdown file.
+A high-performance PowerShell script that converts an entire project directory into a single **LLM-optimized context archive**.
 Designed to create **context for LLMs** (ChatGPT, Claude, Gemini, etc.).
 
 ## ✨ Features
@@ -11,7 +11,31 @@ Designed to create **context for LLMs** (ChatGPT, Claude, Gemini, etc.).
   - Automatically hides `node_modules`, `.git`, binaries, and build artifacts.
   - **Security Redaction**: Hides contents of secrets (`.env`, private keys) while keeping the file structure.
 - **🚀 High Performance**: Supports parallel reading (`-ParallelRead`) for large repositories using PowerShell 7+.
-- **📝 Markdown Output**: Code blocks are properly formatted with language extensions for syntax highlighting.
+- **🤖 LLM-Optimized Sentinel Output**: Uses explicit `BEGIN/END` markers for zero-ambiguity parsing by AI models, removing standard Markdown formatting to maximize reliability.
+
+## 📄 Output Format
+
+The output uses a specific **Sentinel Protocol** designed for LLMs, avoiding Markdown rendering ambiguity.
+
+```text
+===== BEGIN FILE: DUMP_META =====
+format=repodump-v2
+...
+===== END FILE: DUMP_META =====
+
+===== BEGIN FILE: FILE_TREE =====
+my-project
+├─ src/
+│  └─ main.rs
+└─ README.md
+===== END FILE: FILE_TREE =====
+
+===== BEGIN FILE: src/main.rs | lang=rust =====
+fn main() {
+    println!("Hello, world!");
+}
+===== END FILE: src/main.rs =====
+```
 
 ## 🚀 Usage
 
