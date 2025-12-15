@@ -17,6 +17,14 @@ Designed to create **context for LLMs** (ChatGPT, Claude, Gemini, etc.).
 
 Download `RepoDump.ps1` and run it in your terminal.
 
+### Setup (Optional)
+
+To customize exclusion rules and redaction patterns, copy `RepoDump.json.example` to `RepoDump.json`:
+
+```powershell
+Copy-Item RepoDump.json.example RepoDump.json
+```
+
 ### Basic Usage
 
 ```powershell
@@ -44,7 +52,10 @@ This generates `dump.md` in the current directory.
 | `-OutPath` | Output file path. | `./dump.md` |
 | `-UseGitignore` | Use `.gitignore` to exclude files. | `false` |
 | `-ParallelRead` | Enable parallel processing (Requires PS 7+). | `false` |
+| `-ThrottleLimit` | Concurrency limit for parallel reading. | `4` |
 | `-ShowProgress` | Show progress bar during processing. | `false` |
+| `-CsvPreviewLines` | Number of lines to preview for CSV files. | `5` |
+| `-ConfigFile` | Path to a custom configuration JSON file. | `RepoDump.json` |
 | `-MaxFileSizeMB` | Skip files larger than this size. | `5` (MB) |
 
 ## 🛡️ Security Note
