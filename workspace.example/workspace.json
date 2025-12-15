@@ -1,0 +1,12 @@
+{
+  "Targets": [
+    {
+      "Name": "This Repository",
+      "Path": "."
+    },
+    {
+      "Name": "workspace.example",
+      "Path": "workspace.example"
+    }
+  ]
+}

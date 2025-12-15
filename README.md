@@ -44,6 +44,37 @@ This generates `dump.md` in the current directory.
   -ShowProgress
 ```
 
+## 📦 Batch Dump Tool
+
+For managing multiple context dumps (e.g., separating "Whole Project", "Backend", "Frontend"), use the batch tool provided in the `workspace.example` directory.
+
+### Setup
+
+1. Copy the example workspace to create your own working environment:
+   ```powershell
+   Copy-Item -Recurse workspace.example workspace
+   ```
+   The `workspace` directory is ignored by git, providing a clean sandbox for your dumps.
+
+2. Edit `workspace/workspace.json` to define your targets. Paths are relative to the project root.
+   ```json
+   {
+     "Targets": [
+       { "Name": "WholeProject", "Path": "." },
+       { "Name": "Backend", "Path": "backend" }
+     ]
+   }
+   ```
+
+### Usage
+
+```powershell
+cd workspace
+./BatchDump.ps1
+```
+
+This will generate timestamped markdown files (e.g., `20251216_120000_WholeProject.md`) inside the `workspace` directory.
+
 ## ⚙️ Parameters
 
 | Parameter | Description | Default |

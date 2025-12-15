@@ -112,14 +112,14 @@ function Get-RelativePath([string]$root, [string]$fullPath) {
   return $fullPath
 }
 
-function Normalize-Rel([string]$rel) { $rel.Replace("\", "/") }
+function Get-NormalizedPath([string]$rel) { $rel.Replace("\", "/") }
 
-function Is-NameIn([string]$name, [string[]]$names) {
+function Test-NameIn([string]$name, [string[]]$names) {
   foreach ($n in $names) { if ($name -ieq $n) { return $true } }
   return $false
 }
 
-function Is-MatchAnyPattern([string]$name, [string[]]$patterns) {
+function Test-MatchAnyPattern([string]$name, [string[]]$patterns) {
   foreach ($pat in $patterns) { if ($name -like $pat) { return $true } }
   return $false
 }
@@ -133,11 +133,11 @@ function Test-PathMatchesPattern(
   $parts = @($relPath -split "[\\/]")
   if ($parts.Count -gt 1) {
     for ($i = 0; $i -lt $parts.Count - 1; $i++) {
-      if (Is-NameIn $parts[$i] $dirNames) { return $true }
+      if (Test-NameIn $parts[$i] $dirNames) { return $true }
     }
   }
   $leaf = $parts[-1]
-  if (Is-MatchAnyPattern $leaf $filePatterns) { return $true }
+  if (Test-MatchAnyPattern $leaf $filePatterns) { return $true }
   return $false
 }
 
@@ -152,7 +152,7 @@ function Get-HiddenAncestorRel([string]$relPath, [string[]]$hideDirNames, [bool]
   $accum = New-Object System.Collections.Generic.List[string]
   for ($i = 0; $i -lt $limit; $i++) {
     $name = $parts[$i]
-    if (Is-NameIn $name $hideDirNames) {
+    if (Test-NameIn $name $hideDirNames) {
       $accum.Add($name) | Out-Null
       return ($accum -join "/")
     }
@@ -162,7 +162,7 @@ function Get-HiddenAncestorRel([string]$relPath, [string[]]$hideDirNames, [bool]
   return $null
 }
 
-function Detect-SensitiveContent([string]$text) {
+function Find-SensitiveContent([string]$text) {
   $hits = New-Object System.Collections.Generic.List[string]
 
   if ($text -match "ghp_[A-Za-z0-9]{24,}") { $hits.Add("GitHub token") | Out-Null }
@@ -283,11 +283,7 @@ if ($UseGitignore) {
 # “伏せたディレクトリ” を Files セクションで 1回だけ説明するための集合
 function Get-TreeLines([string]$rootFull, [hashtable]$DetectedSecrets) {
   $lines = New-Object System.Collections.Generic.List[string]
-  $lines.Add("# Dump")
-  $lines.Add("")
-  $lines.Add("## Tree")
-  $lines.Add("")
-  $lines.Add("```text")
+  $lines.Add("===== BEGIN FILE: FILE_TREE =====")
   $lines.Add((Split-Path -Leaf $rootFull))
 
   function Walk([string]$dir, [string]$prefix, [string]$relFromRoot) {
@@ -303,7 +299,7 @@ function Get-TreeLines([string]$rootFull, [hashtable]$DetectedSecrets) {
         $childRel = $(if ([string]::IsNullOrEmpty($relFromRoot)) { $item.Name } else { "$relFromRoot/$($item.Name)" })
 
 
-        if (Is-NameIn $item.Name $HideDirNames) {
+        if (Test-NameIn $item.Name $HideDirNames) {
           $lines.Add("$prefix$branch$($item.Name)/ [DIR:本文非表示]")
           continue
         }
@@ -315,8 +311,8 @@ function Get-TreeLines([string]$rootFull, [hashtable]$DetectedSecrets) {
         $leafRel = $(if ([string]::IsNullOrEmpty($relFromRoot)) { $item.Name } else { "$relFromRoot/$($item.Name)" })
         $tag = ""
 
-        if (Is-MatchAnyPattern $item.Name $HideFilePatterns) { $tag = " [FILE:本文非表示]" }
-        elseif (Test-PathMatchesPattern $leafRel $RedactDirNames $RedactFilePatterns -and -not (Is-NameIn $item.Name $AllowEnvNames)) { $tag = " [機微:本文非表示]" }
+        if (Test-MatchAnyPattern $item.Name $HideFilePatterns) { $tag = " [FILE:本文非表示]" }
+        elseif (Test-PathMatchesPattern $leafRel $RedactDirNames $RedactFilePatterns -and -not (Test-NameIn $item.Name $AllowEnvNames)) { $tag = " [機微:本文非表示]" }
         elseif ($DetectedSecrets.ContainsKey($leafRel)) {
           $tag = " [機微:本文非表示:検出項目 " + ($DetectedSecrets[$leafRel] -join ", ") + "]"
         }
@@ -327,7 +323,7 @@ function Get-TreeLines([string]$rootFull, [hashtable]$DetectedSecrets) {
   }
 
   Walk $rootFull "" ""
-  $lines.Add('```')
+  $lines.Add("===== END FILE: FILE_TREE =====")
   $lines.Add("")
   return $lines
 }
@@ -348,13 +344,13 @@ $DetectedSecretMap = @{}
 # 並列読み込みを使う場合も順序は維持したいので、結果は一旦貯める
 $results = New-Object System.Collections.Generic.List[psobject]
 
-function Classify-File([System.IO.FileInfo]$fileInfo) {
-  $rel = Normalize-Rel (Get-RelativePath $rootFull $fileInfo.FullName)
+function Get-FileClassification([System.IO.FileInfo]$fileInfo) {
+  $rel = Get-NormalizedPath (Get-RelativePath $rootFull $fileInfo.FullName)
 
   $hiddenDirRel = Get-HiddenAncestorRel $rel $HideDirNames
 
-  $isHiddenFile = Is-MatchAnyPattern $fileInfo.Name $HideFilePatterns
-  $isRedact = (Test-PathMatchesPattern $rel $RedactDirNames $RedactFilePatterns) -and -not (Is-NameIn $fileInfo.Name $AllowEnvNames)
+  $isHiddenFile = Test-MatchAnyPattern $fileInfo.Name $HideFilePatterns
+  $isRedact = (Test-PathMatchesPattern $rel $RedactDirNames $RedactFilePatterns) -and -not (Test-NameIn $fileInfo.Name $AllowEnvNames)
 
 
   return [pscustomobject]@{
@@ -372,7 +368,7 @@ if ($ParallelRead -and $PSVersionTable.PSVersion.Major -ge 7) {
   Write-Host "[DEBUG] Mode: Parallel (PS7+)"
   # まず分類だけは直列で（軽い）。読み込みだけ並列
   $classified = @(
-    foreach ($f in $allFiles) { Classify-File $f }
+    foreach ($f in $allFiles) { Get-FileClassification $f }
   )
 
 
@@ -428,7 +424,7 @@ if ($ParallelRead -and $PSVersionTable.PSVersion.Major -ge 7) {
       }
 
       $reader.Dispose()
-      $det = @(Detect-SensitiveContent $text)
+      $det = @(Find-SensitiveContent $text)
       if ($det.Count -gt 0) {
         return [pscustomobject]@{ Rel = $rel; Kind = "Sensitive"; Detections = $det }
       }
@@ -493,13 +489,7 @@ else {
   $total = $allFiles.Count
   for ($i = 0; $i -lt $allFiles.Count; $i++) {
     $fileInfo = $allFiles[$i]
-    Write-Host "[DEBUG] Processing ($($i+1)/$total): $($fileInfo.Name)"
-    $c = Classify-File $fileInfo
-
-    if ($ShowProgress) {
-      $pct = [int](($i + 1) * 100 / [Math]::Max(1, $total))
-      Write-Progress -Activity "ファイル処理中" -Status "$($i+1)/$total" -PercentComplete $pct
-    }
+    $c = Get-FileClassification $fileInfo
 
     if ($c.HiddenDirRel) {
       if (-not $writtenHiddenDir.Contains($c.HiddenDirRel)) {
@@ -510,6 +500,10 @@ else {
     }
 
     if ($c.IsHiddenFile) { $results.Add([pscustomobject]@{ Order = $i; Type = "HiddenFile"; Rel = $c.Rel }) | Out-Null; continue }
+    
+    # ログ出力位置を変更：除外対象でない場合のみ表示
+    Write-Host "[DEBUG] Processing ($($i+1)/$total): $($fileInfo.Name)"
+
     if ($c.IsRedacted) { $results.Add([pscustomobject]@{ Order = $i; Type = "Redacted"; Rel = $c.Rel }) | Out-Null; continue }
 
     if ($c.SizeBytes -gt $maxBytes) { $results.Add([pscustomobject]@{ Order = $i; Type = "TooLarge"; Rel = $c.Rel; Size = $c.SizeBytes }) | Out-Null; continue }
@@ -520,7 +514,7 @@ else {
     if ($c.Name.EndsWith(".csv", [StringComparison]::OrdinalIgnoreCase)) { $limit = $CsvPreviewLines }
 
     $text = Read-TextFileAutoEncoding $c.FullName $limit
-    $detected = @(Detect-SensitiveContent $text)
+    $detected = @(Find-SensitiveContent $text)
     if ($detected.Count -gt 0) {
       $DetectedSecretMap[$c.Rel] = $detected
       $results.Add([pscustomobject]@{ Order = $i; Type = "Sensitive"; Rel = $c.Rel; Detections = $detected }) | Out-Null
@@ -541,64 +535,72 @@ $results = @($results.ToArray())
 $tree = Get-TreeLines $rootFull $DetectedSecretMap
 
 $sb = New-Object System.Text.StringBuilder
-foreach ($l in $tree) { [void]$sb.AppendLine($l) }
-[void]$sb.AppendLine("## Files")
+
+# 仕様ヘッダ
+[void]$sb.AppendLine("===== BEGIN FILE: DUMP_META =====")
+[void]$sb.AppendLine("file_tree=FILE_TREE")
+[void]$sb.AppendLine("file_block=BEGIN/END")
+[void]$sb.AppendLine('begin_pattern="===== BEGIN FILE: {path} | lang={lang} ====="')
+[void]$sb.AppendLine('end_pattern="===== END FILE: {path} ====="')
+[void]$sb.AppendLine('redaction_notice="Files may be omitted or redacted; see inline placeholders."')
+[void]$sb.AppendLine("===== END FILE: DUMP_META =====")
 [void]$sb.AppendLine("")
+
+foreach ($l in $tree) { [void]$sb.AppendLine($l) }
 
 foreach ($r in $results) {
   switch ($r.Type) {
     "HiddenDir" {
-      [void]$sb.AppendLine("### $($r.Rel)/")
-      [void]$sb.AppendLine("")
-      [void]$sb.AppendLine("> ディレクトリごと本文非表示（存在のみ記録）")
+      [void]$sb.AppendLine("===== BEGIN FILE: $($r.Rel)/ | lang=redacted =====")
+      [void]$sb.AppendLine("[REDACTED: Directory content hidden (existence only)]")
+      [void]$sb.AppendLine("===== END FILE: $($r.Rel)/ =====")
       [void]$sb.AppendLine("")
     }
     "HiddenFile" {
-      [void]$sb.AppendLine("### $($r.Rel)")
-      [void]$sb.AppendLine("")
-      [void]$sb.AppendLine("> ファイル本文非表示（対象:ビルド成果物/バイナリ/巨大アセット等）")
+      [void]$sb.AppendLine("===== BEGIN FILE: $($r.Rel) | lang=redacted =====")
+      [void]$sb.AppendLine("[REDACTED: Hidden file (build artifact, binary, etc.)]")
+      [void]$sb.AppendLine("===== END FILE: $($r.Rel) =====")
       [void]$sb.AppendLine("")
     }
     "Redacted" {
-      [void]$sb.AppendLine("### $($r.Rel)")
-      [void]$sb.AppendLine("")
-      [void]$sb.AppendLine("> 機微情報につき非表示（存在のみ記録）")
+      [void]$sb.AppendLine("===== BEGIN FILE: $($r.Rel) | lang=redacted =====")
+      [void]$sb.AppendLine("[REDACTED: Sensitive configuration/key]")
+      [void]$sb.AppendLine("===== END FILE: $($r.Rel) =====")
       [void]$sb.AppendLine("")
     }
     "Sensitive" {
-      $det = $(if ($r.Detections) { ($r.Detections -join ", ") } else { "検出" })
-      [void]$sb.AppendLine("### $($r.Rel)")
-      [void]$sb.AppendLine("")
-      [void]$sb.AppendLine("> 機微情報を検出したため本文非表示（検出項目: $det）")
+      $det = $(if ($r.Detections) { ($r.Detections -join ", ") } else { "Unknown" })
+      [void]$sb.AppendLine("===== BEGIN FILE: $($r.Rel) | lang=redacted =====")
+      [void]$sb.AppendLine("[REDACTED: Sensitive bits detected: $det]")
+      [void]$sb.AppendLine("===== END FILE: $($r.Rel) =====")
       [void]$sb.AppendLine("")
     }
     "TooLarge" {
-      [void]$sb.AppendLine("### $($r.Rel)")
-      [void]$sb.AppendLine("")
-      [void]$sb.AppendLine("> Skipped: file size $([Math]::Round($r.Size/1MB,2)) MB exceeds limit ($MaxFileSizeMB MB).")
+      [void]$sb.AppendLine("===== BEGIN FILE: $($r.Rel) | lang=redacted =====")
+      [void]$sb.AppendLine("[REDACTED: File size $([Math]::Round($r.Size/1MB,2)) MB exceeds limit ($MaxFileSizeMB MB)]")
+      [void]$sb.AppendLine("===== END FILE: $($r.Rel) =====")
       [void]$sb.AppendLine("")
     }
     "Binary" {
-      [void]$sb.AppendLine("### $($r.Rel)")
-      [void]$sb.AppendLine("")
-      [void]$sb.AppendLine("> Skipped: detected as binary.")
+      [void]$sb.AppendLine("===== BEGIN FILE: $($r.Rel) | lang=redacted =====")
+      [void]$sb.AppendLine("[REDACTED: Binary file]")
+      [void]$sb.AppendLine("===== END FILE: $($r.Rel) =====")
       [void]$sb.AppendLine("")
     }
     "Text" {
       $ext = [System.IO.Path]::GetExtension($r.Name)
       $lang = Get-LangFromExtension $ext
-
-      [void]$sb.AppendLine("### $($r.Rel)")
-      [void]$sb.AppendLine("")
-      [void]$sb.AppendLine("````$lang")
+      $lang = if ($lang) { $lang } else { "text" }
+      
+      [void]$sb.AppendLine("===== BEGIN FILE: $($r.Rel) | lang=$lang =====")
       [void]$sb.AppendLine(($r.Content).TrimEnd("`r", "`n"))
-      [void]$sb.AppendLine("````")
+      [void]$sb.AppendLine("===== END FILE: $($r.Rel) =====")
       [void]$sb.AppendLine("")
     }
     default {
-      [void]$sb.AppendLine("### $($r.Rel)")
-      [void]$sb.AppendLine("")
-      [void]$sb.AppendLine("> Skipped.")
+      [void]$sb.AppendLine("===== BEGIN FILE: $($r.Rel) | lang=redacted =====")
+      [void]$sb.AppendLine("[REDACTED: Skipped]")
+      [void]$sb.AppendLine("===== END FILE: $($r.Rel) =====")
       [void]$sb.AppendLine("")
     }
   }
