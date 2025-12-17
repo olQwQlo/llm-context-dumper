@@ -1,4 +1,4 @@
-# repo-to-markdown-ps 📄➡️📦
+# llm-context-dumper 📄➡️📦
 
 A high-performance PowerShell script that converts an entire project directory into a single **LLM-optimized context archive**.
 Designed to create **context for LLMs** (ChatGPT, Claude, Gemini, etc.).
