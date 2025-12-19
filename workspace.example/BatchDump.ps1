@@ -75,11 +75,29 @@ if (-not $targets) {
 
 Write-Log "Loaded configuration from $($configPath.Path)" "Green"
 Write-Log "Found $($targets.Count) targets." "Green"
+# -------------------------------------------------------------
+# 実行単位の出力ディレクトリ作成（作成日タイムスタンプ）
+# -------------------------------------------------------------
+$runTimestamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
+
+# OutDir を絶対パス化
+if (-not (Split-Path $OutDir -IsAbsolute)) {
+    $OutDir = Join-Path $scriptRoot $OutDir
+}
+
+$runOutDir = Join-Path $OutDir $runTimestamp
+
+if (Test-Path -LiteralPath $runOutDir) {
+    Write-Error "Output directory already exists: $runOutDir"
+    exit 1
+}
+
+New-Item -ItemType Directory -Path $runOutDir -Force | Out-Null
+Write-Log "Created run output directory: $runOutDir" "Cyan"
 
 # -------------------------------------------------------------
 # メイン処理
 # -------------------------------------------------------------
-$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $successCount = 0
 $failCount = 0
 
@@ -109,7 +127,8 @@ foreach ($t in $targets) {
     $targetFullPath = (Resolve-Path -LiteralPath $targetFullPath).Path
 
     # 出力ファイル名
-    $outFile = Join-Path $OutDir "${timestamp}_${name}.md"
+    $outFile = Join-Path $runOutDir "${name}.md"
+
     if (-not (Split-Path $outFile -IsAbsolute)) {
         $outFile = Join-Path $scriptRoot $outFile
     }
